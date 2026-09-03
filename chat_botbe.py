@@ -8,8 +8,12 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.sqlite import SqliteSaver
-
-
+from langgraph.prebuilt import ToolNode,tools_condition
+from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_core.tools import tool
+import requests
+import random 
+ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
 # Load .env file
 load_dotenv()
 
@@ -20,23 +24,52 @@ llm = ChatGoogleGenerativeAI(
     google_api_key=os.getenv("GEMINI_API_KEY")
 )
 
-
+searchTool=DuckDuckGoSearchRun(region='us-en')
+@tool
+def calculator(first_number: float, second_number: float, operation: str) -> dict:
+    """ perform basic arithmetic operations on two given  numbers,allowed operations are add, subtract,multiply, and divide. """
+    if operation == "add":
+        result= first_number + second_number
+    elif operation == "subtract":
+        result= first_number - second_number
+    elif operation == "multiply":
+        result= first_number * second_number
+    elif operation == "divide":
+        if second_number != 0:
+            result= first_number / second_number
+        else:
+            raise ValueError("Cannot divide by zero.")
+    else:
+        raise ValueError("Invalid operation. Supported operations: add, subtract, multiply, divide.")
+    return {'first_number': first_number, 'second_number': second_number, 'operation': operation, 'result': result}
 # State
 class ChatState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
+@tool
+def get_stock_price(symbol:str)->str:
+    """get the current stock price for a given stock symbol."""
+    url=(  f"https://www.alphavantage.co/query"
+        f"?function=GLOBAL_QUOTE"
+        f"&symbol={symbol}"
+        f"&apikey={ALPHA_VANTAGE_API_KEY}"
+    )
 
+    r=requests.get(url)
+    return r.json()
+tools=[get_stock_price,calculator,searchTool]   
+llm_with_tools=llm.bind_tools(tools)
 # Chat node
 def chat_node(state: ChatState):
 
     messages = state["messages"]
 
-    response = llm.invoke(messages)
+    response = llm_with_tools.invoke(messages)
 
     return {
         "messages": [response]
     }
-
+tool_node=ToolNode(tools)
 
 # SQLite connection
 conn = sqlite3.connect(
@@ -67,13 +100,13 @@ graph = StateGraph(ChatState)
 
 # Add node
 graph.add_node("chat_node", chat_node)
-
+graph.add_node("tools",tool_node)
 
 # Add edges
 graph.add_edge(START, "chat_node")
 graph.add_edge("chat_node", END)
-
-
+graph.add_conditional_edges("chat_node",tools_condition)
+graph.add_edge("tools","chat_node")
 # Compile chatbot
 chatbot = graph.compile(
     checkpointer=checkpointer

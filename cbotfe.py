@@ -5,7 +5,7 @@ from chat_botbe import (
     save_chat_name,
     retrieve_all_chat_names
 )
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 import uuid
 
 
@@ -100,13 +100,22 @@ for thread_id in st.session_state['chat_threads'][::-1]:
 
         for message in messages:
 
+            # Ignore tool messages
+            if isinstance(message, ToolMessage):
+                continue
+
+
             if isinstance(message, HumanMessage):
 
                 role = "user"
 
-            else:
+            elif isinstance(message, AIMessage):
 
                 role = "assistant"
+
+            else:
+
+                continue
 
 
             content = message.content
@@ -230,6 +239,11 @@ if user_input:
 
             stream_mode="messages"
         ):
+
+            # Only stream AI messages
+            if not isinstance(message_chunk, AIMessage):
+                continue
+
 
             content = message_chunk.content
 
