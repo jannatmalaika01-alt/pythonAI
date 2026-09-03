@@ -11,6 +11,10 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.prebuilt import ToolNode,tools_condition
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_core.tools import tool
+from langchain_community.vectorstores import FAISS
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 import requests
 import random 
 ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
@@ -23,6 +27,39 @@ llm = ChatGoogleGenerativeAI(
     model="gemini-3.5-flash-lite",
     google_api_key=os.getenv("GEMINI_API_KEY")
 )
+# load the pdf
+loader=PyPDFLoader("wed servlets.pdf")
+docs=loader.load()
+#get its length
+len(docs)
+#now we split the doc
+splitter=RecursiveCharacterTextSplitter(chunk_size=1000,chunk_overlap=200)
+chunks=splitter.split_documents(docs)
+#now we get length of chunk 
+len(chunks)
+#gemini embedding class
+embeddings=GoogleGenerativeAIEmbeddings( model="models/gemini-embedding-001",
+    google_api_key=os.getenv("GEMINI_API_KEY"))
+# now faiss db 
+vector_store=FAISS.from_documents(chunks,embeddings)
+vector_store
+#create retriever 
+retriever =vector_store.as_retriever(search_type='similarity',search_kwargs={'k':4})
+# making a rag retriebver tool
+@tool
+def rag_retriever(query):
+    """Retreive relevant information from the pdf document . Use this tool when the user asks facual /conceptual questions that might be answered from the stored document."""
+    result=retriever.invoke(query)
+    context=[doc.page_content for doc in result]
+    meta_data=[doc.metadata for doc in result]
+    return{
+        'query':query,
+        'context':context,
+        'meta_data':meta_data
+    }
+
+
+
 
 searchTool=DuckDuckGoSearchRun(region='us-en')
 @tool
