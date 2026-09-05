@@ -23,40 +23,20 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-
-# ============================================================
-# LOAD ENVIRONMENT VARIABLES
-# ============================================================
-
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
-
-
-# ============================================================
-# GEMINI LLM
-# ============================================================
 
 llm = ChatGoogleGenerativeAI(
     model="gemini-3.5-flash-lite",
     google_api_key=GEMINI_API_KEY
 )
 
-
-# ============================================================
-# GEMINI EMBEDDINGS
-# ============================================================
-
 embeddings = GoogleGenerativeAIEmbeddings(
     model="models/gemini-embedding-001",
     google_api_key=GEMINI_API_KEY
 )
-
-
-# ============================================================
-# PDF INGESTION FUNCTION
-# ============================================================
 
 def ingest_pdf(pdf_path):
     """
@@ -69,56 +49,31 @@ def ingest_pdf(pdf_path):
 
     # Load the PDF
     loader = PyPDFLoader(pdf_path)
-
     docs = loader.load()
 
     print("PDF loaded successfully.")
     print("Number of pages:", len(docs))
 
     # Split the document into chunks
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200
-    )
-
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     chunks = splitter.split_documents(docs)
 
     print("Document split successfully.")
     print("Number of chunks:", len(chunks))
 
     # Create FAISS vector store
-    vector_store = FAISS.from_documents(
-        chunks,
-        embeddings
-    )
+    vector_store = FAISS.from_documents(chunks, embeddings)
 
     print("FAISS vector store created successfully.")
 
     return vector_store
 
-
-# ============================================================
-# INGEST PDF
-# ============================================================
-
 vector_store = ingest_pdf("web servlets.pdf")
-
-
-# ============================================================
-# CREATE RETRIEVER
-# ============================================================
 
 retriever = vector_store.as_retriever(
     search_type="similarity",
-    search_kwargs={
-        "k": 4
-    }
+    search_kwargs={"k": 4}
 )
-
-
-# ============================================================
-# RAG RETRIEVER TOOL
-# ============================================================
 
 @tool
 def rag_retriever(query):
@@ -131,15 +86,8 @@ def rag_retriever(query):
 
     result = retriever.invoke(query)
 
-    context = [
-        doc.page_content
-        for doc in result
-    ]
-
-    meta_data = [
-        doc.metadata
-        for doc in result
-    ]
+    context = [doc.page_content for doc in result]
+    meta_data = [doc.metadata for doc in result]
 
     return {
         "query": query,
@@ -147,26 +95,10 @@ def rag_retriever(query):
         "meta_data": meta_data
     }
 
-
-# ============================================================
-# WEB SEARCH TOOL
-# ============================================================
-
-searchTool = DuckDuckGoSearchRun(
-    region="us-en"
-)
-
-
-# ============================================================
-# CALCULATOR TOOL
-# ============================================================
+searchTool = DuckDuckGoSearchRun(region="us-en")
 
 @tool
-def calculator(
-    first_number: float,
-    second_number: float,
-    operation: str
-) -> dict:
+def calculator(first_number: float, second_number: float, operation: str) -> dict:
     """
     Perform basic arithmetic operations on two given numbers.
 
@@ -175,26 +107,21 @@ def calculator(
     """
 
     if operation == "add":
-
         result = first_number + second_number
 
     elif operation == "subtract":
-
         result = first_number - second_number
 
     elif operation == "multiply":
-
         result = first_number * second_number
 
     elif operation == "divide":
-
         if second_number != 0:
             result = first_number / second_number
         else:
             raise ValueError("Cannot divide by zero.")
 
     else:
-
         raise ValueError(
             "Invalid operation. Supported operations: "
             "add, subtract, multiply, divide."
@@ -207,22 +134,8 @@ def calculator(
         "result": result
     }
 
-
-# ============================================================
-# CHAT STATE
-# ============================================================
-
 class ChatState(TypedDict):
-
-    messages: Annotated[
-        list[BaseMessage],
-        add_messages
-    ]
-
-
-# ============================================================
-# STOCK PRICE TOOL
-# ============================================================
+    messages: Annotated[list[BaseMessage], add_messages]
 
 @tool
 def get_stock_price(symbol: str) -> str:
@@ -241,11 +154,6 @@ def get_stock_price(symbol: str) -> str:
 
     return r.json()
 
-
-# ============================================================
-# TOOLS
-# ============================================================
-
 tools = [
     get_stock_price,
     calculator,
@@ -253,58 +161,18 @@ tools = [
     rag_retriever
 ]
 
-
-# ============================================================
-# BIND TOOLS TO GEMINI
-# ============================================================
-
 llm_with_tools = llm.bind_tools(tools)
 
-
-# ============================================================
-# CHAT NODE
-# ============================================================
-
 def chat_node(state: ChatState):
-
     messages = state["messages"]
-
     response = llm_with_tools.invoke(messages)
-
-    return {
-        "messages": [response]
-    }
-
-
-# ============================================================
-# TOOL NODE
-# ============================================================
+    return {"messages": [response]}
 
 tool_node = ToolNode(tools)
 
+conn = sqlite3.connect("chatbot.db", check_same_thread=False)
 
-# ============================================================
-# SQLITE CONNECTION
-# ============================================================
-
-conn = sqlite3.connect(
-    "chatbot.db",
-    check_same_thread=False
-)
-
-
-# ============================================================
-# LANGGRAPH MEMORY
-# ============================================================
-
-checkpointer = SqliteSaver(
-    conn=conn
-)
-
-
-# ============================================================
-# CHAT NAMES TABLE
-# ============================================================
+checkpointer = SqliteSaver(conn=conn)
 
 conn.execute("""
     CREATE TABLE IF NOT EXISTS chat_names (
@@ -316,141 +184,65 @@ conn.execute("""
 
 conn.commit()
 
-
-# ============================================================
-# CREATE GRAPH
-# ============================================================
-
 graph = StateGraph(ChatState)
 
+graph.add_node("chat_node", chat_node)
+graph.add_node("tools", tool_node)
 
-# ============================================================
-# ADD NODES
-# ============================================================
-
-graph.add_node(
-    "chat_node",
-    chat_node
-)
-
-graph.add_node(
-    "tools",
-    tool_node
-)
-
-
-# ============================================================
-# GRAPH EDGES
-# ============================================================
-
-graph.add_edge(
-    START,
-    "chat_node"
-)
+graph.add_edge(START, "chat_node")
 
 # IMPORTANT:
 # Do not add chat_node -> END here.
 #
 # tools_condition decides whether:
-#
 # chat_node -> tools
-#
 # OR
-#
 # chat_node -> END
 
-graph.add_conditional_edges(
-    "chat_node",
-    tools_condition
-)
+graph.add_conditional_edges("chat_node", tools_condition)
+graph.add_edge("tools", "chat_node")
 
-graph.add_edge(
-    "tools",
-    "chat_node"
-)
-
-
-# ============================================================
-# COMPILE CHATBOT
-# ============================================================
-
-chatbot = graph.compile(
-    checkpointer=checkpointer
-)
-
-
-# ============================================================
-# GET ALL THREADS
-# ============================================================
+chatbot = graph.compile(checkpointer=checkpointer)
 
 def retrieve_all_threads():
-
     all_threads = set()
 
     for checkpoint in checkpointer.list(None):
-
-        thread_id = checkpoint.config[
-            "configurable"
-        ]["thread_id"]
-
+        thread_id = checkpoint.config["configurable"]["thread_id"]
         all_threads.add(thread_id)
 
     return list(all_threads)
 
-
-# ============================================================
-# SAVE CHAT NAME
-# ============================================================
-
 def save_chat_name(thread_id, chat_name):
-
     conn.execute(
         """
         INSERT OR REPLACE INTO chat_names
         (thread_id, chat_name)
         VALUES (?, ?)
         """,
-        (
-            str(thread_id),
-            chat_name
-        )
+        (str(thread_id), chat_name)
     )
 
     conn.commit()
 
-
-# ============================================================
-# GET CHAT NAME
-# ============================================================
-
 def get_chat_name(thread_id):
-
     cursor = conn.execute(
         """
         SELECT chat_name
         FROM chat_names
         WHERE thread_id = ?
         """,
-        (
-            str(thread_id),
-        )
+        (str(thread_id),)
     )
 
     result = cursor.fetchone()
 
     if result:
-
         return result[0]
 
     return "New Chat"
 
-
-# ============================================================
-# GET ALL CHAT NAMES
-# ============================================================
-
 def retrieve_all_chat_names():
-
     chat_names = {}
 
     cursor = conn.execute(
@@ -463,7 +255,6 @@ def retrieve_all_chat_names():
     rows = cursor.fetchall()
 
     for thread_id, chat_name in rows:
-
         chat_names[thread_id] = chat_name
 
     return chat_names
